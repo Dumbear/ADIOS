@@ -94,7 +94,7 @@ int bits_compress(uint64_t mask_length, const char *mask, uint64_t *mask_bits_le
 
     uint64_t i, j, index = 0;
     for (i = 0; i < *mask_bits_length; ++i) {
-        for (int j = 0; j < sizeof(**mask_bits)) {
+        for (j = 0; j < sizeof(**mask_bits); ++j) {
             if (index >= mask_length) {
                 break;
             }
@@ -108,7 +108,7 @@ int bits_compress(uint64_t mask_length, const char *mask, uint64_t *mask_bits_le
 int bits_decompress(uint64_t mask_bits_length, int *mask_bits, uint64_t *mask_length, char **mask) {
     *mask_length = mask_bits_length * sizeof(*mask_bits);
     *mask = malloc(*mask_length * sizeof(**mask));
-    if (**mask == NULL) {
+    if (*mask == NULL) {
         return 1;
     }
 

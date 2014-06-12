@@ -232,6 +232,10 @@ int adios_define_mesh_unstructured (char * points,
                                     char * nspace,
                                     int64_t group_id,
                                     const char * name);
+
+int adios_set_mask(int64_t fd_p, uint64_t mask_length, const char *mask);
+int adios_unset_mask(int64_t fd_p);
+
 #ifdef __cplusplus
 }
 #endif
