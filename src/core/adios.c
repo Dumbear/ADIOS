@@ -33,6 +33,9 @@
 extern struct adios_transport_struct * adios_transports;
 extern int adios_errno;
 
+static uint64_t g_mask_bits_length;
+static int *g_mask_bits = NULL;
+
 int adios_set_application_id (int id)
 {
     globals_adios_set_application_id (id);
@@ -80,6 +83,63 @@ int adios_group_size (int64_t fd_p, uint64_t data_size
                      )
 {
     return common_adios_group_size (fd_p, data_size, total_size);
+}
+
+int bits_compress(uint64_t mask_length, const char *mask, uint64_t *mask_bits_length, int **mask_bits) {
+    *mask_bits_length = (mask_length + sizeof(**mask_bits) - 1) / sizeof(**mask_bits);
+    *mask_bits = malloc(*mask_bits_length * sizeof(**mask_bits));
+    if (*mask_bits == NULL) {
+        return 1;
+    }
+
+    uint64_t i, j, index = 0;
+    for (i = 0; i < *mask_bits_length; ++i) {
+        for (int j = 0; j < sizeof(**mask_bits)) {
+            if (index >= mask_length) {
+                break;
+            }
+            (*mask_bits)[i] |= (mask[index] & 1) << j;
+            ++index;
+        }
+    }
+    return err_no_error;
+}
+
+int bits_decompress(uint64_t mask_bits_length, int *mask_bits, uint64_t *mask_length, char **mask) {
+    *mask_length = mask_bits_length * sizeof(*mask_bits);
+    *mask = malloc(*mask_length * sizeof(**mask));
+    if (**mask == NULL) {
+        return 1;
+    }
+
+    uint64_t i, j, index = 0;
+    for (i = 0; i < mask_bits_length; ++i) {
+        for (j = 0; j < sizeof(*mask_bits); ++j) {
+            (*mask)[index] = (mask_bits[i] >> j) & 1;
+            ++index;
+        }
+    }
+    return err_no_error;
+}
+
+int adios_set_mask(int64_t fd_p, uint64_t mask_length, const char *mask) {
+    if (g_mask_bits != NULL) {
+        // Currently only one set_mask call is allowed.
+        return 1;
+    }
+
+    bits_compress(mask_length, mask, &g_mask_bits_length, &g_mask_bits);
+
+    adios_write(fd_p, "mask_vars/mask_bits_length", &g_mask_bits_length);
+    adios_write(fd_p, "mask_vars/mask_bits", g_mask_bits);
+
+    return err_no_error;
+}
+
+int adios_unset_mask(int64_t fd_p) {
+    free(g_mask_bits);
+    g_mask_bits = NULL;
+    return err_no_error;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
