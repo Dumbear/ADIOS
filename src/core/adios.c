@@ -33,6 +33,7 @@
 extern struct adios_transport_struct * adios_transports;
 extern int adios_errno;
 
+static uint64_t g_final_length;
 static uint64_t g_mask_bits_length;
 static int *g_mask_bits = NULL;
 
@@ -85,20 +86,24 @@ int adios_group_size (int64_t fd_p, uint64_t data_size
     return common_adios_group_size (fd_p, data_size, total_size);
 }
 
-int bits_compress(uint64_t mask_length, const char *mask, uint64_t *mask_bits_length, int **mask_bits) {
-    *mask_bits_length = (mask_length + sizeof(**mask_bits) - 1) / sizeof(**mask_bits);
+int bits_compress(uint64_t mask_length, const char *mask, uint64_t *mask_bits_length, int **mask_bits, uint64_t *final_length) {
+    *mask_bits_length = (mask_length + sizeof(**mask_bits) * 8 - 1) / (sizeof(**mask_bits) * 8);
     *mask_bits = malloc(*mask_bits_length * sizeof(**mask_bits));
     if (*mask_bits == NULL) {
         return 1;
     }
 
     uint64_t i, j, index = 0;
+    *final_length = 0;
     for (i = 0; i < *mask_bits_length; ++i) {
-        for (j = 0; j < sizeof(**mask_bits); ++j) {
+        for (j = 0; j < sizeof(**mask_bits) * 8; ++j) {
             if (index >= mask_length) {
                 break;
             }
-            (*mask_bits)[i] |= (mask[index] & 1) << j;
+            if (mask[index] != 0) {
+                ++*final_length;
+                (*mask_bits)[i] |= 1 << j;
+            }
             ++index;
         }
     }
@@ -106,7 +111,7 @@ int bits_compress(uint64_t mask_length, const char *mask, uint64_t *mask_bits_le
 }
 
 int bits_decompress(uint64_t mask_bits_length, int *mask_bits, uint64_t *mask_length, char **mask) {
-    *mask_length = mask_bits_length * sizeof(*mask_bits);
+    *mask_length = mask_bits_length * sizeof(*mask_bits) * 8;
     *mask = malloc(*mask_length * sizeof(**mask));
     if (*mask == NULL) {
         return 1;
@@ -114,7 +119,7 @@ int bits_decompress(uint64_t mask_bits_length, int *mask_bits, uint64_t *mask_le
 
     uint64_t i, j, index = 0;
     for (i = 0; i < mask_bits_length; ++i) {
-        for (j = 0; j < sizeof(*mask_bits); ++j) {
+        for (j = 0; j < sizeof(*mask_bits) * 8; ++j) {
             (*mask)[index] = (mask_bits[i] >> j) & 1;
             ++index;
         }
@@ -128,8 +133,9 @@ int adios_set_mask(int64_t fd_p, uint64_t mask_length, const char *mask) {
         return 1;
     }
 
-    bits_compress(mask_length, mask, &g_mask_bits_length, &g_mask_bits);
+    bits_compress(mask_length, mask, &g_mask_bits_length, &g_mask_bits, &g_final_length);
 
+    adios_write(fd_p, "mask_vars/final_length", &g_final_length);
     adios_write(fd_p, "mask_vars/mask_bits_length", &g_mask_bits_length);
     adios_write(fd_p, "mask_vars/mask_bits", g_mask_bits);
 
@@ -184,7 +190,28 @@ int adios_write (int64_t fd_p, const char * name, void * var)
         return adios_errno;
     }
 
-    retval = common_adios_write_byid (fd, v, var);
+    if (strncmp(name, "mask_vars/", 10) != 0 && g_mask_bits != NULL) {
+        uint64_t element_size = adios_get_type_size(v->type, var);
+        uint64_t var_length = adios_get_var_size(v, var) / element_size;
+        char *buffer = malloc(g_final_length * element_size);
+        uint64_t i, j, index = 0;
+        for (i = 0; i < var_length; ++i) {
+            uint64_t p = i / (sizeof(*g_mask_bits) * 8), q = i % (sizeof(*g_mask_bits) * 8);
+            if (((g_mask_bits[p] >> q) & 1) == 1) {
+                memcpy(buffer + index, (char *)var + i * element_size, element_size);
+                index += element_size;
+            }
+        }
+        char *mask_name = malloc((10 + strlen(name) + 1));
+        strcpy(mask_name, "mask_vars/");
+        strcat(mask_name, name);
+        retval = adios_write(fd_p, mask_name, buffer);
+        free(mask_name);
+        free(buffer);
+    } else {
+        retval = common_adios_write_byid (fd, v, var);
+    }
+
 #if 0
     if (fd->mode == adios_mode_read)
     {
