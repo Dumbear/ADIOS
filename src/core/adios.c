@@ -33,6 +33,7 @@
 extern struct adios_transport_struct * adios_transports;
 extern int adios_errno;
 
+static int g_mask_count;
 static uint64_t g_final_length;
 static uint64_t g_mask_bits_length;
 static int *g_mask_bits = NULL;
@@ -75,6 +76,7 @@ int adios_open (int64_t * fd, const char * group_name, const char * name
                ,const char * mode, MPI_Comm comm
                )
 {
+    g_mask_count = 0;
     return common_adios_open (fd, group_name, name, mode, comm);
 }
 
@@ -129,15 +131,23 @@ int bits_decompress(uint64_t mask_bits_length, int *mask_bits, uint64_t *mask_le
 
 int adios_set_mask(int64_t fd_p, uint64_t mask_length, const char *mask) {
     if (g_mask_bits != NULL) {
-        // Currently only one set_mask call is allowed.
+        adios_unset_mask(fd_p);
         return 1;
     }
 
+    ++g_mask_count;
     bits_compress(mask_length, mask, &g_mask_bits_length, &g_mask_bits, &g_final_length);
 
-    adios_write(fd_p, "mask_vars/final_length", &g_final_length);
-    adios_write(fd_p, "mask_vars/mask_bits_length", &g_mask_bits_length);
-    adios_write(fd_p, "mask_vars/mask_bits", g_mask_bits);
+    char s[64];
+
+    sprintf(s, "mask_vars/mask_%d/final_length", g_mask_count);
+    adios_write(fd_p, s, &g_final_length);
+
+    sprintf(s, "mask_vars/mask_%d/mask_bits_length", g_mask_count);
+    adios_write(fd_p, s, &g_mask_bits_length);
+
+    sprintf(s, "mask_vars/mask_%d/mask_bits", g_mask_count);
+    adios_write(fd_p, s, g_mask_bits);
 
     return err_no_error;
 }
