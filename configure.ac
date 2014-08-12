@@ -703,6 +703,7 @@ AC_CONFIG_FILES([Makefile
                  tests/C/flexpath_tests/maya_noxml/Makefile
                  tests/C/flexpath_tests/maya_append/Makefile
                  tests/C/flexpath_tests/scalar/Makefile
+                 tests/C/fgr_tests/Makefile
                  tests/Fortran/Makefile
                  tests/genarray/Makefile
                  tests/bp_read/Makefile
@@ -725,6 +726,7 @@ AC_CONFIG_FILES([Makefile
                  utils/bpdiff/Makefile
                  utils/bp2bp/Makefile
                  utils/list_methods/Makefile
+                 utils/bpmeta/Makefile
                  examples/Makefile
                  examples/C/Makefile
                  examples/C/scalars/Makefile
