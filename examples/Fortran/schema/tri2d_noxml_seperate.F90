@@ -65,7 +65,7 @@ program tri2d_f_noxml
     real*8, dimension(:), allocatable       :: C                                   ! cell centered variable
     real*8, dimension(:,:), allocatable     :: points                              ! X,Y coordinate
     integer*4, dimension(:,:), allocatable  :: cells
-    character(:), allocatable            :: schema_version, dimemsions
+    character, dimension(:), allocatable            :: schema_version, dimemsions
 
     integer*4               :: offs_x, offs_y                      ! offset in x and y direction
     integer*4               :: nx_local, ny_local                  ! local address
@@ -90,7 +90,7 @@ program tri2d_f_noxml
     call processArgs
 
     if (arg_err == 1) then
-        return
+        !return
     endif
 
     ndx = 4
@@ -285,7 +285,7 @@ program tri2d_f_noxml
     call adios_define_attribute (data_group, "description", "/npoints", adios_string, "Number of points", "", adios_err)
     call adios_define_attribute (data_group, "description", "/num_cells", adios_string, "Number of triangles", "", adios_err)
 
-    call adios_define_schema_version (data_group, schema_version)
+    !call adios_define_schema_version (data_group, schema_version)
     call adios_define_mesh_file (data_group, "trimesh", "trimesh.bp")
 
     call adios_define_var_mesh (data_group, "N", "trimesh")
@@ -329,7 +329,7 @@ program tri2d_f_noxml
     call adios_define_attribute (mesh_group, "description", "/npoints", adios_string, "Number of points", "", adios_err)
     call adios_define_attribute (mesh_group, "description", "/num_cells", adios_string, "Number of triangles", "", adios_err)
 
-    call adios_define_schema_version (mesh_group, schema_version)
+    !call adios_define_schema_version (mesh_group, schema_version)
     call adios_define_mesh_timevarying ("no", mesh_group, "trimesh")
     call adios_define_mesh_unstructured ("points", "cells", "num_cells", "triangle", "", "2", mesh_group, "trimesh")
 

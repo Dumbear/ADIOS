@@ -19,6 +19,7 @@
 #include "public/adios_error.h"
 #include "core/adios_logger.h"
 #include "core/adios_timing.h"
+#include "public/adios.h"
 
 #ifdef __cplusplus
 extern "C"  /* prevent C++ name mangling */
@@ -30,6 +31,36 @@ extern "C"  /* prevent C++ name mangling */
 #endif
 
 extern int adios_errno;
+int have_mask = 0;
+
+///////////////////////////////////////////////////////////////////////////////
+void FC_FUNC_(adios_set_mask, ADIOS_SET_MASK) 
+        (int64_t * fd_p, uint64_t * mask_length, int * mask, MPI_Fint * comm, int mask_size)
+{
+    int i, size = *mask_length;
+    char * mask_buf = (char *)malloc( size*sizeof(char) );
+    memset( mask_buf, 0, size*sizeof(char));
+    
+    MPI_Comm c_comm = MPI_Comm_f2c (*comm);
+    have_mask = 1;
+    
+    for ( i = 0; i < *mask_length; i++ )
+            mask_buf[i] = mask[i];
+    adios_set_mask(*fd_p, *mask_length, mask_buf, c_comm);
+    free( mask_buf );
+}
+
+///////////////////////////////////////////////////////////////////////////////
+void FC_FUNC_(adios_unset_mask, ADIOS_UNSET_MASK) ( int64_t * fd_p ) {
+    have_mask = 0;
+    adios_unset_mask(*fd_p);
+}
+
+void FC_FUNC_(adios_mask_init, ADIOS_MASK_INIT) ()
+{
+    adios_mask_init();
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////
 void FC_FUNC_(adios_set_application_id, ADIOS_SET_APPLICATION_ID) (int *id, int * err)
@@ -184,7 +215,7 @@ void FC_FUNC_(adios_write, ADIOS_WRITE)
         *err = adios_errno;
         return;
     }
-
+    
     struct adios_var_struct * v = fd->group->vars;
     struct adios_method_list_struct * m = fd->group->methods;
 
@@ -202,6 +233,10 @@ void FC_FUNC_(adios_write, ADIOS_WRITE)
 
     if (!buf1) {
         *err = adios_errno;
+        return;
+    }
+    if (have_mask) {
+        adios_write(*fd_p, buf1, var);
         return;
     }
 
