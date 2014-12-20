@@ -170,7 +170,7 @@ int adios_read_set_mask(const ADIOS_FILE *fp, int mask_id, int n_dims, const cha
         printf(" - ");
         for (j = 0; j < n_dims; ++j) {
             if (j == 0) printf("[");
-            printf("%d", g_block_offset[j][i]);
+            printf("%d", g_block_offset[j][i] + g_block_length[j][i]);
             printf(j + 1 == n_dims ? "]" : ", ");
         }
         printf("\n");

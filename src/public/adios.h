@@ -237,8 +237,6 @@ int adios_set_mask(int64_t fd_p, uint64_t mask_length, const char *mask, MPI_Com
 int adios_unset_mask(int64_t fd_p);
 int adios_mask_init();
 
-int adios_read_set_mask(const ADIOS_FILE *fp, int mask_id, int n_dims, const char **offset_var_names, const char **length_var_names);
-
 #ifdef __cplusplus
 }
 #endif
