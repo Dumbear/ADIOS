@@ -570,7 +570,8 @@ void adios_reset_dimension_order (ADIOS_FILE *fp, int is_fortran);
 /** Test function to print basic info about the file to stdout */
 void adios_print_fileinfo (ADIOS_FILE *fp);
 
-int adios_read_set_mask(const ADIOS_FILE *fp, int mask_id, int n_dims, const char **offset_var_names, const char **length_var_names);
+int adios_read_set_mask(ADIOS_FILE *fp, int mask_id, int n_dims, const char **offset_var_names, const char **length_var_names);
+int adios_read_unset_mask(const ADIOS_FILE *fp);
 
 #endif  /*__INCLUDED_FROM_FORTRAN_API__*/
 
