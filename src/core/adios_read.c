@@ -253,6 +253,7 @@ int adios_read_unset_mask(const ADIOS_FILE *fp) {
     g_block_length = NULL;
 
     /* TODO: free g_requests*/
+    g_requests = NULL;
 
     return err_no_error;
 }
@@ -333,6 +334,7 @@ int adios_schedule_read_byid_param (const ADIOS_FILE * fp,
 }
 
 static int adios_read_mask_var(mask_read_request *req) {
+    printf("    Should read var: %s\n", req->var_name);
     return err_no_error;
 }
 
