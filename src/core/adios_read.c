@@ -18,7 +18,7 @@ typedef struct _mask_read_request {
     ADIOS_SELECTION *sel;
     int from_step;
     int n_steps;
-    void *data;
+    char *data;
     struct _mask_read_request *next;
 } mask_read_request;
 
@@ -343,7 +343,8 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
     uint64_t element_size = adios_get_type_size(var_info->type, var_info->value);
     adios_free_varinfo(var_info);
 
-    int i, j, index;
+    int i, j, k;
+    uint64_t index;
 
     /*char **mask = (char **)malloc(sizeof(char *) * g_n_blocks);
     for (i = 0; i < g_n_blocks; ++i) {
@@ -362,7 +363,7 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
             mask_vars[i] = (char *)malloc(sizeof(char) * element_size * g_mask_length[i]); /* TODO: take care of steps */
             uint64_t offset = g_mask_offset[i], length = g_mask_length[i];
             ADIOS_SELECTION *mask_sel = adios_selection_boundingbox(1, &offset, &length);
-            adios_schedule_read(fp, mask_sel, s, req->from_step, req->nsteps, mask_vars[i]);
+            adios_schedule_read(fp, mask_sel, s, req->from_step, req->n_steps, mask_vars[i]);
         }
     }
     common_read_perform_reads(fp, 1);
@@ -388,7 +389,37 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
             }
         }
 
-        // Merge var here
+        /*uint64_t start[10], end[10];
+        for (j = 0; j < g_n_dims; ++j) {
+            start[j] = req->sel->u.bb.start[j];
+            if (g_block_offset[i][j] > start[j]) {
+                start[j] = g_block_offset[i][j];
+            }
+            end[j] = req->sel->u.bb.start[j] + req->sel->u.bb.count[j] - 1;
+            if (g_block_offset[i][j] + g_block_length[i][j] - 1 < end[j]) {
+                end[j] = g_block_offset[i][j] + g_block_length[i][j] - 1;
+            }
+        }*/
+        for (j = 0; j < var_length; ++j) {
+            int offset[10];
+            int pos = j;
+            int f_in_domain = 1;
+            for (k = g_n_dims - 1; k >= 0; --k) {
+                offset[k] = g_block_offset[i][k] + pos % g_block_length[i][k] - req->sel->u.bb.start[k];
+                if (offset[k] < 0 || offset[k] >= req->sel->u.bb.count[k]) {
+                    f_in_domain = 0;
+                    break;
+                }
+                pos /= g_block_length[i][k];
+            }
+            if (f_in_domain) {
+                pos = 0;
+                for (k = 0; k < g_n_dims; ++k) {
+                    pos = pos * req->sel->u.bb.count[k] + offset[k];
+                }
+                memcpy(req->data + element_size * pos, var_data + element_size * j, element_size);
+            }
+        }
 
         free(var_data);
     }
