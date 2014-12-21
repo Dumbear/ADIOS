@@ -13,7 +13,10 @@
 #include "core/common_read.h"
 #define BYTE_ALIGN 8
 
+static int g_n_dims;
 static int g_n_blocks;
+
+static int **g_mask_bits = NULL;
 
 static int *g_mask_bits_offset;
 static int *g_mask_bits_length;
@@ -121,6 +124,7 @@ int adios_read_set_mask(const ADIOS_FILE *fp, int mask_id, int n_dims, const cha
     int i, j;
     char s[4][64];
 
+    g_n_dims = n_dims;
     sprintf(s[0], "mask_vars/mask_%d/mask_bits", mask_id);
     ADIOS_VARINFO *mask_info = adios_inq_var(fp, s[0]);
     g_n_blocks = mask_info->nblocks[0];
@@ -131,16 +135,21 @@ int adios_read_set_mask(const ADIOS_FILE *fp, int mask_id, int n_dims, const cha
     sprintf(s[2], "mask_vars/mask_%d/mask_offset", mask_id);
     sprintf(s[3], "mask_vars/mask_%d/final_length", mask_id);
 
+    g_mask_bits = (int **)malloc(sizeof(int *) * g_n_blocks);
+    for (i = 0; i < g_n_blocks; ++i) {
+        g_mask_bits[i] = NULL;
+    }
+
     g_mask_bits_offset = (int *)malloc(sizeof(int) * g_n_blocks);
     g_mask_bits_length = (int *)malloc(sizeof(int) * g_n_blocks);
     g_mask_offset = (int *)malloc(sizeof(int) * g_n_blocks);
     g_mask_length = (int *)malloc(sizeof(int) * g_n_blocks);
 
-    g_block_offset = (int **)malloc(sizeof(int *) * n_dims);
-    g_block_length = (int **)malloc(sizeof(int *) * n_dims);
-    for (i = 0; i < n_dims; ++i) {
-        g_block_offset[i] = (int *)malloc(sizeof(int) * g_n_blocks);
-        g_block_length[i] = (int *)malloc(sizeof(int) * g_n_blocks);
+    g_block_offset = (int **)malloc(sizeof(int *) * g_n_blocks);
+    g_block_length = (int **)malloc(sizeof(int *) * g_n_blocks);
+    for (i = 0; i < g_n_blocks; ++i) {
+        g_block_offset[i] = (int *)malloc(sizeof(int) * g_n_dims);
+        g_block_length[i] = (int *)malloc(sizeof(int) * g_n_dims);
     }
 
     for (i = 0; i < g_n_blocks; ++i) {
@@ -149,9 +158,9 @@ int adios_read_set_mask(const ADIOS_FILE *fp, int mask_id, int n_dims, const cha
         adios_schedule_read(fp, sel, s[1], 0, 1, &g_mask_bits_length[i]);
         adios_schedule_read(fp, sel, s[2], 0, 1, &g_mask_offset[i]);
         adios_schedule_read(fp, sel, s[3], 0, 1, &g_mask_length[i]);
-        for (j = 0; j < n_dims; ++j) {
-            adios_schedule_read(fp, sel, offset_var_names[j], 0, 1, &g_block_offset[j][i]);
-            adios_schedule_read(fp, sel, length_var_names[j], 0, 1, &g_block_length[j][i]);
+        for (j = 0; j < g_n_dims; ++j) {
+            adios_schedule_read(fp, sel, offset_var_names[j], 0, 1, &g_block_offset[i][j]);
+            adios_schedule_read(fp, sel, length_var_names[j], 0, 1, &g_block_length[i][j]);
         }
         adios_selection_delete(sel);
     }
@@ -162,21 +171,61 @@ int adios_read_set_mask(const ADIOS_FILE *fp, int mask_id, int n_dims, const cha
         printf("Mask bits range: [%d, %d]\n", g_mask_bits_offset[i], g_mask_bits_offset[i] + g_mask_bits_length[i] - 1);
         printf("Mask range: [%d, %d]\n", g_mask_offset[i], g_mask_offset[i] + g_mask_length[i] - 1);
         printf("Original domain range: ");
-        for (j = 0; j < n_dims; ++j) {
+        for (j = 0; j < g_n_dims; ++j) {
             if (j == 0) printf("[");
-            printf("%d", g_block_offset[j][i]);
-            printf(j + 1 == n_dims ? "]" : ", ");
+            printf("%d", g_block_offset[i][j]);
+            printf(j + 1 == g_n_dims ? "]" : ", ");
         }
         printf(" - ");
-        for (j = 0; j < n_dims; ++j) {
+        for (j = 0; j < g_n_dims; ++j) {
             if (j == 0) printf("[");
-            printf("%d", g_block_offset[j][i] + g_block_length[j][i]);
-            printf(j + 1 == n_dims ? "]" : ", ");
+            printf("%d", g_block_offset[i][j] + g_block_length[i][j] - 1);
+            printf(j + 1 == g_n_dims ? "]" : ", ");
         }
         printf("\n");
     }
 
     return err_no_error;
+}
+
+int adios_read_unset_mask(const ADIOS_FILE *fp) {
+    int i, j;
+
+    for (i = 0; i < g_n_blocks; ++i) {
+        if (g_mask_bits[i] != NULL) {
+            free(g_mask_bits[i]);
+        }
+    }
+    free(g_mask_bits);
+    g_mask_bits = NULL;
+
+    free(g_mask_bits_offset);
+    free(g_mask_bits_length);
+    free(g_mask_offset);
+    free(g_mask_length);
+    g_mask_bits_offset = NULL;
+    g_mask_bits_length = NULL;
+    g_mask_offset = NULL;
+    g_mask_length = NULL;
+
+    for (i = 0; i < g_n_blocks; ++i) {
+        free(g_block_offset[i]);
+        free(g_block_length[i]);
+    }
+    free(g_block_offset);
+    free(g_block_length);
+    g_block_offset = NULL;
+    g_block_length = NULL;
+}
+
+int adios_boundingbox_touched(const ADIOS_SELECTION *sel, int *offset, int *length) {
+    int i;
+    for (i = 0; i < sel->u.bb.ndim; ++i) {
+        if (sel->u.bb.start[i] >= offset[i] + length[i] || sel->u.bb.start[i] + sel->u.bb.count[i] <= offset[i]) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 int adios_schedule_read (const ADIOS_FILE      * fp,
@@ -186,7 +235,19 @@ int adios_schedule_read (const ADIOS_FILE      * fp,
                              int                     nsteps,
                              void                  * data)
 {
-    return common_read_schedule_read (fp, sel, varname, from_steps, nsteps, NULL, data);
+    if (strncmp(varname, "mask_vars/", 10) == 0 || g_mask_bits == NULL) {
+        return common_read_schedule_read (fp, sel, varname, from_steps, nsteps, NULL, data);
+    }
+
+    int i;
+
+    for (i = 0; i < g_n_blocks; ++i) {
+        if(g_mask_bits[i] == NULL && adios_boundingbox_touched(sel, g_block_offset[i], g_block_length[i])) {
+            g_mask_bits[i] = (int *)malloc(sizeof(int) * g_mask_bits_length[i]);
+            ADIOS_SELECTION *mask_bits_sel = adios_selection_boundingbox(1, &g_mask_bits_offset[i], &g_mask_bits_length[i]);
+            adios_schedule_read(fp, mask_bits_sel, from_steps, nsteps, g_mask_bits[i]);
+        }
+    }
 }
 
 int adios_schedule_read_byid (const ADIOS_FILE      * fp,
