@@ -13,6 +13,15 @@
 #include "core/common_read.h"
 #define BYTE_ALIGN 8
 
+typedef struct _mask_read_request {
+    char *var_name;
+    ADIOS_SELECTION *sel;
+    int from_step;
+    int n_steps;
+    void *data;
+    struct _mask_read_request *next;
+} mask_read_request;
+
 static int g_n_dims;
 static int g_n_blocks;
 static int g_mask_id;
@@ -26,6 +35,13 @@ static int *g_mask_length;
 
 static int **g_block_offset;
 static int **g_block_length;
+
+static mask_read_request *g_requests = NULL;
+
+static void add_mask_read_request(mask_read_request *req) {
+    req->next = g_requests;
+    g_requests = req;
+}
 
 const char *adios_errmsg ()
 {
@@ -119,6 +135,23 @@ void adios_free_meshinfo (ADIOS_MESH *meshinfo)
 int adios_inq_var_meshinfo (ADIOS_FILE *fp, ADIOS_VARINFO * varinfo)
 {
     return common_read_inq_var_meshinfo (fp, varinfo);
+}
+
+static int bits_decompress(uint64_t mask_bits_length, int *mask_bits, uint64_t *mask_length, char **mask) {
+    *mask_length = mask_bits_length * sizeof(int) * 8;
+    *mask = malloc(*mask_length * sizeof(char) );
+    if (*mask == NULL) {
+        return 1;
+    }
+
+    uint64_t i, j, index = 0;
+    for (i = 0; i < mask_bits_length; ++i) {
+        for (j = 0; j < sizeof(int) * 8; ++j) {
+            (*mask)[index] = (mask_bits[i] >> j) & 1;
+            ++index;
+        }
+    }
+    return err_no_error;
 }
 
 int adios_read_set_mask(ADIOS_FILE *fp, int mask_id, int n_dims, const char **offset_var_names, const char **length_var_names) {
@@ -218,6 +251,10 @@ int adios_read_unset_mask(const ADIOS_FILE *fp) {
     free(g_block_length);
     g_block_offset = NULL;
     g_block_length = NULL;
+
+    /* TODO: free g_requests*/
+
+    return err_no_error;
 }
 
 int adios_boundingbox_touched(const ADIOS_SELECTION *sel, int *offset, int *length) {
@@ -251,8 +288,18 @@ int adios_schedule_read (const ADIOS_FILE      * fp,
             uint64_t offset = g_mask_bits_offset[i], length = g_mask_bits_length[i];
             ADIOS_SELECTION *mask_bits_sel = adios_selection_boundingbox(1, &offset, &length);
             adios_schedule_read(fp, mask_bits_sel, s, from_steps, nsteps, g_mask_bits[i]);
+
+            mask_read_request *req = (mask_read_request *)malloc(sizeof(mask_read_request));
+            req->var_name = strdup(varname);
+            req->sel = copy_selection(sel);
+            req->from_step = from_steps;
+            req->n_steps = nsteps;
+            req->data = data;
+            add_mask_read_request(req);
         }
     }
+
+    return err_no_error;
 }
 
 int adios_schedule_read_byid (const ADIOS_FILE      * fp,
@@ -285,9 +332,22 @@ int adios_schedule_read_byid_param (const ADIOS_FILE * fp,
     return common_read_schedule_read_byid (fp, sel, varid, from_steps, nsteps, param, data);
 }
 
+static int adios_read_mask_var(mask_read_request *req) {
+    return err_no_error;
+}
+
 int adios_perform_reads (const ADIOS_FILE *fp, int blocking)
 {
-    return common_read_perform_reads (fp, blocking);
+    if (g_mask_bits == NULL) {
+        return common_read_perform_reads (fp, blocking);
+    }
+
+    common_read_perform_reads (fp, blocking);
+
+    mask_read_request *req;
+    for (req = g_requests; req != NULL; req = req->next) {
+        adios_read_mask_var(req);
+    }
 }
 
 int adios_check_reads (const ADIOS_FILE * fp, ADIOS_VARCHUNK ** chunk)
