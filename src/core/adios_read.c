@@ -201,24 +201,24 @@ int adios_read_set_mask(ADIOS_FILE *fp, int mask_id, int n_dims, const char **of
         g_mask_bits[i] = NULL;
     }
 
-    for (i = 0; i < g_n_blocks; ++i) {
-        printf("-------------------- Block %d --------------------\n", i);
-        printf("Mask bits range: [%d, %d]\n", g_mask_bits_offset[i], g_mask_bits_offset[i] + g_mask_bits_length[i] - 1);
-        printf("Mask range: [%d, %d]\n", g_mask_offset[i], g_mask_offset[i] + g_mask_length[i] - 1);
-        printf("Original domain range: ");
-        for (j = 0; j < g_n_dims; ++j) {
-            if (j == 0) printf("[");
-            printf("%d", g_block_offset[i][j]);
-            printf(j + 1 == g_n_dims ? "]" : ", ");
-        }
-        printf(" - ");
-        for (j = 0; j < g_n_dims; ++j) {
-            if (j == 0) printf("[");
-            printf("%d", g_block_offset[i][j] + g_block_length[i][j] - 1);
-            printf(j + 1 == g_n_dims ? "]" : ", ");
-        }
-        printf("\n");
-    }
+    // for (i = 0; i < g_n_blocks; ++i) {
+    //     printf("-------------------- Block %d --------------------\n", i);
+    //     printf("Mask bits range: [%d, %d]\n", g_mask_bits_offset[i], g_mask_bits_offset[i] + g_mask_bits_length[i] - 1);
+    //     printf("Mask range: [%d, %d]\n", g_mask_offset[i], g_mask_offset[i] + g_mask_length[i] - 1);
+    //     printf("Original domain range: ");
+    //     for (j = 0; j < g_n_dims; ++j) {
+    //         if (j == 0) printf("[");
+    //         printf("%d", g_block_offset[i][j]);
+    //         printf(j + 1 == g_n_dims ? "]" : ", ");
+    //     }
+    //     printf(" - ");
+    //     for (j = 0; j < g_n_dims; ++j) {
+    //         if (j == 0) printf("[");
+    //         printf("%d", g_block_offset[i][j] + g_block_length[i][j] - 1);
+    //         printf(j + 1 == g_n_dims ? "]" : ", ");
+    //     }
+    //     printf("\n");
+    // }
 
     return err_no_error;
 }
@@ -252,8 +252,13 @@ int adios_read_unset_mask(const ADIOS_FILE *fp) {
     g_block_offset = NULL;
     g_block_length = NULL;
 
-    /* TODO: free g_requests*/
-    g_requests = NULL;
+    mask_read_request *req;
+    for (req = g_requests; req != NULL; req = g_requests) {
+        g_requests = req->next;
+        free(req->var_name);
+        adios_selection_delete(req->sel);
+        free(req);
+    }
 
     return err_no_error;
 }
@@ -285,6 +290,7 @@ int adios_schedule_read (const ADIOS_FILE      * fp,
     sprintf(s, "mask_vars/mask_%d/mask_bits", g_mask_id);
     for (i = 0; i < g_n_blocks; ++i) {
         if(g_mask_bits[i] == NULL && adios_boundingbox_touched(sel, g_block_offset[i], g_block_length[i])) {
+            // printf("    Variable %s touched block %d\n", varname, i);
             g_mask_bits[i] = (int *)malloc(sizeof(int) * g_mask_bits_length[i]);
             uint64_t offset = g_mask_bits_offset[i], length = g_mask_bits_length[i];
             ADIOS_SELECTION *mask_bits_sel = adios_selection_boundingbox(1, &offset, &length);
@@ -346,15 +352,15 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
     int i, j, k;
     uint64_t index;
 
-    /*char **mask = (char **)malloc(sizeof(char *) * g_n_blocks);
-    for (i = 0; i < g_n_blocks; ++i) {
-        if (g_mask_bits[i] == NULL) {
-            mask[i] = NULL;
-        } else {
-            uint64_t mask_length = 0;
-            bits_decompress(g_mask_bits_length[i], g_mask_bits[i], &mask_length, &mask[i]);
-        }
-    }*/
+    // char **mask = (char **)malloc(sizeof(char *) * g_n_blocks);
+    // for (i = 0; i < g_n_blocks; ++i) {
+    //     if (g_mask_bits[i] == NULL) {
+    //         mask[i] = NULL;
+    //     } else {
+    //         uint64_t mask_length = 0;
+    //         bits_decompress(g_mask_bits_length[i], g_mask_bits[i], &mask_length, &mask[i]);
+    //     }
+    // }
 
     char **mask_vars = (char **)malloc(sizeof(char *) * g_n_blocks);
     for (i = 0; i < g_n_blocks; ++i) {
@@ -389,17 +395,17 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
             }
         }
 
-        /*uint64_t start[10], end[10];
-        for (j = 0; j < g_n_dims; ++j) {
-            start[j] = req->sel->u.bb.start[j];
-            if (g_block_offset[i][j] > start[j]) {
-                start[j] = g_block_offset[i][j];
-            }
-            end[j] = req->sel->u.bb.start[j] + req->sel->u.bb.count[j] - 1;
-            if (g_block_offset[i][j] + g_block_length[i][j] - 1 < end[j]) {
-                end[j] = g_block_offset[i][j] + g_block_length[i][j] - 1;
-            }
-        }*/
+        // uint64_t start[10], end[10];
+        // for (j = 0; j < g_n_dims; ++j) {
+        //     start[j] = req->sel->u.bb.start[j];
+        //     if (g_block_offset[i][j] > start[j]) {
+        //         start[j] = g_block_offset[i][j];
+        //     }
+        //     end[j] = req->sel->u.bb.start[j] + req->sel->u.bb.count[j] - 1;
+        //     if (g_block_offset[i][j] + g_block_length[i][j] - 1 < end[j]) {
+        //         end[j] = g_block_offset[i][j] + g_block_length[i][j] - 1;
+        //     }
+        // }
         for (j = 0; j < var_length; ++j) {
             int offset[10];
             int pos = j;
@@ -425,14 +431,14 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
     }
 
     for (i = 0; i < g_n_blocks; ++i) {
-        /*if (mask[i] != NULL) {
-            free(mask[i]);
-        }*/
+        // if (mask[i] != NULL) {
+        //     free(mask[i]);
+        // }
         if (mask_vars[i] != NULL) {
             free(mask_vars[i]);
         }
     }
-    //free(mask);
+    // free(mask);
     free(mask_vars);
 
     return err_no_error;
