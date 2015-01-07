@@ -22,19 +22,24 @@ typedef struct _mask_read_request {
     struct _mask_read_request *next;
 } mask_read_request;
 
+const int G_MAX_MASK_NUM;
+
+static int g_f_using_dataspaces = 0;
+
 static int g_n_dims;
 static int g_n_blocks;
-static int g_mask_id;
+static int g_mask_id = -1;
 
-static int **g_mask_bits = NULL;
+static int g_f_mask_done[G_MAX_MASK_NUM] = {};
+static int **g_mask_bits[G_MAX_MASK_NUM];
 
-static int *g_mask_bits_offset;
-static int *g_mask_bits_length;
-static int *g_mask_offset;
-static int *g_mask_length;
+static int *g_mask_bits_offset[G_MAX_MASK_NUM];
+static int *g_mask_bits_length[G_MAX_MASK_NUM];
+static int *g_mask_offset[G_MAX_MASK_NUM];
+static int *g_mask_length[G_MAX_MASK_NUM];
 
-static int **g_block_offset;
-static int **g_block_length;
+static int **g_block_offset[G_MAX_MASK_NUM];
+static int **g_block_length[G_MAX_MASK_NUM];
 
 static mask_read_request *g_requests = NULL;
 
@@ -50,6 +55,11 @@ const char *adios_errmsg ()
 
 int adios_read_init_method (enum ADIOS_READ_METHOD method, MPI_Comm comm, const char * parameters)
 {
+    if (method == ADIOS_READ_METHOD_DATASPACES) {
+        g_f_using_dataspaces = 1;
+    }
+    g_mask_id = -1;
+    memset(g_f_mask_done, 0, sizeof(g_f_mask_done));
     return common_read_init_method (method,comm,parameters);
 } 
 
@@ -137,22 +147,22 @@ int adios_inq_var_meshinfo (ADIOS_FILE *fp, ADIOS_VARINFO * varinfo)
     return common_read_inq_var_meshinfo (fp, varinfo);
 }
 
-static int bits_decompress(uint64_t mask_bits_length, int *mask_bits, uint64_t *mask_length, char **mask) {
-    *mask_length = mask_bits_length * sizeof(int) * 8;
-    *mask = malloc(*mask_length * sizeof(char));
-    if (*mask == NULL) {
-        return 1;
-    }
+// static int bits_decompress(uint64_t mask_bits_length, int *mask_bits, uint64_t *mask_length, char **mask) {
+//     *mask_length = mask_bits_length * sizeof(int) * 8;
+//     *mask = malloc(*mask_length * sizeof(char));
+//     if (*mask == NULL) {
+//         return 1;
+//     }
 
-    uint64_t i, j, index = 0;
-    for (i = 0; i < mask_bits_length; ++i) {
-        for (j = 0; j < sizeof(int) * 8; ++j) {
-            (*mask)[index] = (mask_bits[i] >> j) & 1;
-            ++index;
-        }
-    }
-    return err_no_error;
-}
+//     uint64_t i, j, index = 0;
+//     for (i = 0; i < mask_bits_length; ++i) {
+//         for (j = 0; j < sizeof(int) * 8; ++j) {
+//             (*mask)[index] = (mask_bits[i] >> j) & 1;
+//             ++index;
+//         }
+//     }
+//     return err_no_error;
+// }
 
 int adios_read_set_mask(ADIOS_FILE *fp, int mask_id, int n_dims, const char **offset_var_names, const char **length_var_names) {
     int i, j;
@@ -160,45 +170,69 @@ int adios_read_set_mask(ADIOS_FILE *fp, int mask_id, int n_dims, const char **of
 
     g_n_dims = n_dims;
     g_mask_id = mask_id;
-    sprintf(s[0], "mask_vars/mask_%d/mask_bits", g_mask_id);
-    ADIOS_VARINFO *mask_info = adios_inq_var(fp, s[0]);
-    g_n_blocks = mask_info->nblocks[0];
-    adios_free_varinfo(mask_info);
+    if (g_f_using_dataspaces) {
+        sprintf(s[0], "const/proc_size");
+        ADIOS_VARINFO *proc_size_info = adios_inq_var(fp, s[0]);
+        g_n_blocks = *(int *)proc_size_info->value;
+        adios_free_varinfo(proc_size_info);
+    } else {
+        sprintf(s[0], "mask_vars/mask_%d/mask_bits", g_mask_id);
+        ADIOS_VARINFO *mask_info = adios_inq_var(fp, s[0]);
+        g_n_blocks = mask_info->nblocks[0];
+        adios_free_varinfo(mask_info);
+    }
 
-    sprintf(s[0], "mask_vars/mask_%d/mask_bits_offset", g_mask_id);
-    sprintf(s[1], "mask_vars/mask_%d/mask_bits_length", g_mask_id);
-    sprintf(s[2], "mask_vars/mask_%d/mask_offset", g_mask_id);
-    sprintf(s[3], "mask_vars/mask_%d/final_length", g_mask_id);
+    if (g_f_mask_done[g_mask_id]) {
+        return err_no_error;
+    }
 
-    g_mask_bits_offset = (int *)malloc(sizeof(int) * g_n_blocks);
-    g_mask_bits_length = (int *)malloc(sizeof(int) * g_n_blocks);
-    g_mask_offset = (int *)malloc(sizeof(int) * g_n_blocks);
-    g_mask_length = (int *)malloc(sizeof(int) * g_n_blocks);
+    if (g_f_using_dataspaces) {
+        sprintf(s[0], "const/mask_%d/mask_bits_offset", g_mask_id);
+        sprintf(s[1], "const/mask_%d/mask_bits_length", g_mask_id);
+        sprintf(s[2], "const/mask_%d/mask_offset", g_mask_id);
+        sprintf(s[3], "const/mask_%d/final_length", g_mask_id);
+    } else {
+        sprintf(s[0], "mask_vars/mask_%d/mask_bits_offset", g_mask_id);
+        sprintf(s[1], "mask_vars/mask_%d/mask_bits_length", g_mask_id);
+        sprintf(s[2], "mask_vars/mask_%d/mask_offset", g_mask_id);
+        sprintf(s[3], "mask_vars/mask_%d/final_length", g_mask_id);
+    }
 
-    g_block_offset = (int **)malloc(sizeof(int *) * g_n_blocks);
-    g_block_length = (int **)malloc(sizeof(int *) * g_n_blocks);
+    g_mask_bits_offset[g_mask_id] = (int *)malloc(sizeof(int) * g_n_blocks);
+    g_mask_bits_length[g_mask_id] = (int *)malloc(sizeof(int) * g_n_blocks);
+    g_mask_offset[g_mask_id] = (int *)malloc(sizeof(int) * g_n_blocks);
+    g_mask_length[g_mask_id] = (int *)malloc(sizeof(int) * g_n_blocks);
+
+    g_block_offset[g_mask_id] = (int **)malloc(sizeof(int *) * g_n_blocks);
+    g_block_length[g_mask_id] = (int **)malloc(sizeof(int *) * g_n_blocks);
     for (i = 0; i < g_n_blocks; ++i) {
-        g_block_offset[i] = (int *)malloc(sizeof(int) * g_n_dims);
-        g_block_length[i] = (int *)malloc(sizeof(int) * g_n_dims);
+        g_block_offset[g_mask_id][i] = (int *)malloc(sizeof(int) * g_n_dims);
+        g_block_length[g_mask_id][i] = (int *)malloc(sizeof(int) * g_n_dims);
     }
 
     for (i = 0; i < g_n_blocks; ++i) {
-        ADIOS_SELECTION *sel = adios_selection_writeblock(i);
-        adios_schedule_read(fp, sel, s[0], 0, 1, &g_mask_bits_offset[i]);
-        adios_schedule_read(fp, sel, s[1], 0, 1, &g_mask_bits_length[i]);
-        adios_schedule_read(fp, sel, s[2], 0, 1, &g_mask_offset[i]);
-        adios_schedule_read(fp, sel, s[3], 0, 1, &g_mask_length[i]);
+        ADIOS_SELECTION *sel;
+        if (g_f_using_dataspaces) {
+            uint64_t t_start = i, t_count = 1;
+            sel = adios_selection_boundingbox(1, &t_start, &t_count);
+        } else {
+            sel = adios_selection_writeblock(i);
+        }
+        adios_schedule_read(fp, sel, s[0], 0, 1, &g_mask_bits_offset[g_mask_id][i]);
+        adios_schedule_read(fp, sel, s[1], 0, 1, &g_mask_bits_length[g_mask_id][i]);
+        adios_schedule_read(fp, sel, s[2], 0, 1, &g_mask_offset[g_mask_id][i]);
+        adios_schedule_read(fp, sel, s[3], 0, 1, &g_mask_length[g_mask_id][i]);
         for (j = 0; j < g_n_dims; ++j) {
-            adios_schedule_read(fp, sel, offset_var_names[j], 0, 1, &g_block_offset[i][j]);
-            adios_schedule_read(fp, sel, length_var_names[j], 0, 1, &g_block_length[i][j]);
+            adios_schedule_read(fp, sel, offset_var_names[j], 0, 1, &g_block_offset[g_mask_id][i][j]);
+            adios_schedule_read(fp, sel, length_var_names[j], 0, 1, &g_block_length[g_mask_id][i][j]);
         }
         adios_selection_delete(sel);
     }
     adios_perform_reads(fp, 1);
 
-    g_mask_bits = (int **)malloc(sizeof(int *) * g_n_blocks);
+    g_mask_bits[g_mask_id] = (int **)malloc(sizeof(int *) * g_n_blocks);
     for (i = 0; i < g_n_blocks; ++i) {
-        g_mask_bits[i] = NULL;
+        g_mask_bits[g_mask_id][i] = NULL;
     }
 
     // for (i = 0; i < g_n_blocks; ++i) {
@@ -224,33 +258,7 @@ int adios_read_set_mask(ADIOS_FILE *fp, int mask_id, int n_dims, const char **of
 }
 
 int adios_read_unset_mask(const ADIOS_FILE *fp) {
-    int i, j;
-
-    for (i = 0; i < g_n_blocks; ++i) {
-        if (g_mask_bits[i] != NULL) {
-            free(g_mask_bits[i]);
-        }
-    }
-    free(g_mask_bits);
-    g_mask_bits = NULL;
-
-    free(g_mask_bits_offset);
-    free(g_mask_bits_length);
-    free(g_mask_offset);
-    free(g_mask_length);
-    g_mask_bits_offset = NULL;
-    g_mask_bits_length = NULL;
-    g_mask_offset = NULL;
-    g_mask_length = NULL;
-
-    for (i = 0; i < g_n_blocks; ++i) {
-        free(g_block_offset[i]);
-        free(g_block_length[i]);
-    }
-    free(g_block_offset);
-    free(g_block_length);
-    g_block_offset = NULL;
-    g_block_length = NULL;
+    g_mask_id = -1;
 
     mask_read_request *req;
     for (req = g_requests; req != NULL; req = g_requests) {
@@ -261,6 +269,42 @@ int adios_read_unset_mask(const ADIOS_FILE *fp) {
     }
 
     return err_no_error;
+}
+
+int adios_read_remove_mask() {
+    int i, j, k;
+
+    for (k = 0; k < G_MAX_MASK_NUM; ++k) {
+        if (g_mask_bits[k] == NULL) {
+            continue;
+        }
+
+        for (i = 0; i < g_n_blocks; ++i) {
+            if (g_mask_bits[k][i] != NULL) {
+                free(g_mask_bits[k][i]);
+            }
+        }
+        free(g_mask_bits[k]);
+        g_mask_bits[k] = NULL;
+
+        free(g_mask_bits_offset[k]);
+        free(g_mask_bits_length[k]);
+        free(g_mask_offset[k]);
+        free(g_mask_length[k]);
+        g_mask_bits_offset[k] = NULL;
+        g_mask_bits_length[k] = NULL;
+        g_mask_offset[k] = NULL;
+        g_mask_length[k] = NULL;
+
+        for (i = 0; i < g_n_blocks; ++i) {
+            free(g_block_offset[k][i]);
+            free(g_block_length[k][i]);
+        }
+        free(g_block_offset);
+        free(g_block_length);
+        g_block_offset[k] = NULL;
+        g_block_length[k] = NULL;
+    }
 }
 
 int adios_boundingbox_touched(const ADIOS_SELECTION *sel, int *offset, int *length) {
@@ -280,7 +324,7 @@ int adios_schedule_read (const ADIOS_FILE      * fp,
                              int                     nsteps,
                              void                  * data)
 {
-    if (strncmp(varname, "mask_vars/", 10) == 0 || g_mask_bits == NULL) {
+    if (strncmp(varname, "mask_vars/", 10) == 0 || g_mask_id == -1 || g_mask_bits[g_mask_id] == NULL) {
         return common_read_schedule_read (fp, sel, varname, from_steps, nsteps, NULL, data);
     }
 
@@ -289,12 +333,12 @@ int adios_schedule_read (const ADIOS_FILE      * fp,
     char s[64];
     sprintf(s, "mask_vars/mask_%d/mask_bits", g_mask_id);
     for (i = 0; i < g_n_blocks; ++i) {
-        if(g_mask_bits[i] == NULL && adios_boundingbox_touched(sel, g_block_offset[i], g_block_length[i])) {
+        if(g_mask_bits[g_mask_id][i] == NULL && adios_boundingbox_touched(sel, g_block_offset[g_mask_id][i], g_block_length[g_mask_id][i])) {
             // printf("    Variable %s touched block %d\n", varname, i);
-            g_mask_bits[i] = (int *)malloc(sizeof(int) * g_mask_bits_length[i]);
-            uint64_t offset = g_mask_bits_offset[i], length = g_mask_bits_length[i];
+            g_mask_bits[g_mask_id][i] = (int *)malloc(sizeof(int) * g_mask_bits_length[g_mask_id][i]);
+            uint64_t offset = g_mask_bits_offset[g_mask_id][i], length = g_mask_bits_length[g_mask_id][i];
             ADIOS_SELECTION *mask_bits_sel = adios_selection_boundingbox(1, &offset, &length);
-            adios_schedule_read(fp, mask_bits_sel, s, from_steps, nsteps, g_mask_bits[i]);
+            adios_schedule_read(fp, mask_bits_sel, s, from_steps, nsteps, g_mask_bits[g_mask_id][i]);
         }
     }
 
@@ -365,9 +409,9 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
     char **mask_vars = (char **)malloc(sizeof(char *) * g_n_blocks);
     for (i = 0; i < g_n_blocks; ++i) {
         mask_vars[i] = NULL;
-        if (adios_boundingbox_touched(req->sel, g_block_offset[i], g_block_length[i])) {
-            mask_vars[i] = (char *)malloc(sizeof(char) * element_size * g_mask_length[i]); /* TODO: take care of steps */
-            uint64_t offset = g_mask_offset[i], length = g_mask_length[i];
+        if (adios_boundingbox_touched(req->sel, g_block_offset[g_mask_id][i], g_block_length[g_mask_id][i])) {
+            mask_vars[i] = (char *)malloc(sizeof(char) * element_size * g_mask_length[g_mask_id][i]); /* TODO: take care of steps */
+            uint64_t offset = g_mask_offset[g_mask_id][i], length = g_mask_length[g_mask_id][i];
             ADIOS_SELECTION *mask_sel = adios_selection_boundingbox(1, &offset, &length);
             adios_schedule_read(fp, mask_sel, s, req->from_step, req->n_steps, mask_vars[i]);
         }
@@ -380,14 +424,14 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
         }
         uint64_t var_length = 1;
         for (j = 0; j < g_n_dims; ++j) {
-            var_length *= g_block_length[i][j];
+            var_length *= g_block_length[g_mask_id][i][j];
         }
         char *var_data = (char *)malloc(sizeof(char) * element_size * var_length);
 
         index = 0;
         for (j = 0; j < var_length; ++j) {
             uint64_t p = j / (sizeof(int) * 8), q = j % (sizeof(int) * 8);
-            if (((g_mask_bits[i][p] >> q) & 1) == 1) {
+            if (((g_mask_bits[g_mask_id][i][p] >> q) & 1) == 1) {
                 memcpy(var_data + element_size * j, (char *)mask_vars[i] + index, element_size);
                 index += element_size;
             } else {
@@ -411,12 +455,12 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
             int pos = j;
             int f_in_domain = 1;
             for (k = g_n_dims - 1; k >= 0; --k) {
-                offset[k] = g_block_offset[i][k] + pos % g_block_length[i][k] - req->sel->u.bb.start[k];
+                offset[k] = g_block_offset[g_mask_id][i][k] + pos % g_block_length[g_mask_id][i][k] - req->sel->u.bb.start[k];
                 if (offset[k] < 0 || offset[k] >= req->sel->u.bb.count[k]) {
                     f_in_domain = 0;
                     break;
                 }
-                pos /= g_block_length[i][k];
+                pos /= g_block_length[g_mask_id][i][k];
             }
             if (f_in_domain) {
                 pos = 0;
@@ -446,11 +490,12 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
 
 int adios_perform_reads (const ADIOS_FILE *fp, int blocking)
 {
-    if (g_mask_bits == NULL) {
+    if (g_mask_id == -1 || g_mask_bits[g_mask_id] == NULL) {
         return common_read_perform_reads (fp, blocking);
     }
 
     common_read_perform_reads (fp, blocking);
+    g_f_mask_done[g_mask_id] = 1;
 
     mask_read_request *req;
     for (req = g_requests; req != NULL; req = req->next) {
