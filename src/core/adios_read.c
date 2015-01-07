@@ -22,7 +22,7 @@ typedef struct _mask_read_request {
     struct _mask_read_request *next;
 } mask_read_request;
 
-const int G_MAX_MASK_NUM;
+static const int G_MAX_MASK_NUM = 8;
 
 static int g_f_using_dataspaces = 0;
 
@@ -389,7 +389,7 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
     char s[64];
     sprintf(s, "mask_vars/%s", req->var_name);
 
-    ADIOS_VARINFO *var_info = adios_inq_var(fp, s);
+    ADIOS_VARINFO *var_info = adios_inq_var((ADIOS_FILE *)fp, s);
     uint64_t element_size = adios_get_type_size(var_info->type, var_info->value);
     adios_free_varinfo(var_info);
 

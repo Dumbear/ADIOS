@@ -33,15 +33,17 @@
 extern struct adios_transport_struct * adios_transports;
 extern int adios_errno;
 
-static int g_mask_count;
+static const int G_MAX_MASK_NUM = 8;
+
+static int g_mask_id = -1;
 static int g_total_length;
 static int g_mask_bits_offset;
 static int g_mask_offset;
 static int g_mask_final_length;
 static int g_mask_bits_final_length;
 static uint64_t g_final_length;
-static uint64_t g_mask_bits_length;
-static int *g_mask_bits = NULL;
+static uint64_t g_mask_bits_length[G_MAX_MASK_NUM];
+static int *g_mask_bits[G_MAX_MASK_NUM];
 
 int adios_set_application_id (int id)
 {
@@ -81,7 +83,7 @@ int adios_open (int64_t * fd, const char * group_name, const char * name
                ,const char * mode, MPI_Comm comm
                )
 {
-    g_mask_count = 0;
+    g_mask_id = -1;
     return common_adios_open (fd, group_name, name, mode, comm);
 }
 
@@ -144,54 +146,59 @@ int adios_set_mask_bits_offset(int64_t fd_p, uint64_t mask_length, int rank_p, i
 
 ////////////////////////////////////////////////////////////////////////////////////
 int adios_mask_init() {
-    g_mask_count = 0;
+    g_mask_id = -1;
     return err_no_error;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-int adios_set_mask(int64_t fd_p, uint64_t mask_length, const char *mask, MPI_Comm comm) {
-    if (g_mask_bits != NULL) {
+int adios_set_mask(int64_t fd_p, int mask_id, uint64_t mask_length, const char *mask, MPI_Comm comm) {
+    if (g_mask_id != -1) {
         adios_unset_mask(fd_p);
         log_error("Set mask error\n");
         return 1;
+    }
+
+    g_mask_id = mask_id;
+
+    if (g_mask_bits[g_mask_id] != NULL) {
+        return err_no_error;
     }
     
     int rank, size, i;
     MPI_Comm_rank (comm, &rank);
     MPI_Comm_size (comm, &size);
     
-    ++g_mask_count;
-    bits_compress(mask_length, mask, &g_mask_bits_length, &g_mask_bits, &g_final_length);
+    bits_compress(mask_length, mask, &g_mask_bits_length[g_mask_id], &g_mask_bits[g_mask_id], &g_final_length[g_mask_id]);
 
     char s[64];
     int *lengthbuf = (int *) malloc ( sizeof(int) * size );
     int *offsetbuf = (int *) malloc ( sizeof(int) * size );
     
-    MPI_Gather(&g_mask_bits_length, 1, MPI_INT, lengthbuf, 1, MPI_INT, 0, comm);
+    MPI_Gather(&g_mask_bits_length[g_mask_id], 1, MPI_INT, lengthbuf, 1, MPI_INT, 0, comm);
 
     if ( rank == 0 ) {
         offsetbuf[0] = 0;
         for ( i = 1; i < size; i++ ) {
             offsetbuf[i] = lengthbuf[i-1] + offsetbuf[i-1]; 
         }
-        g_mask_bits_final_length = offsetbuf[size-1] + lengthbuf[size-1];
+        g_mask_bits_final_length[g_mask_id] = offsetbuf[size-1] + lengthbuf[size-1];
     }
 
-    MPI_Scatter(offsetbuf, 1, MPI_INT, &g_mask_bits_offset, 1, MPI_INT, 0, comm); 
-    MPI_Bcast(&g_mask_bits_final_length, 1, MPI_INT, 0, comm);
+    MPI_Scatter(offsetbuf, 1, MPI_INT, &g_mask_bits_offset[g_mask_id], 1, MPI_INT, 0, comm); 
+    MPI_Bcast(&g_mask_bits_final_length[g_mask_id], 1, MPI_INT, 0, comm);
     
-    MPI_Gather(&g_final_length, 1, MPI_INT, lengthbuf, 1, MPI_INT, 0, comm);
+    MPI_Gather(&g_final_length[g_mask_id], 1, MPI_INT, lengthbuf, 1, MPI_INT, 0, comm);
     
     if ( rank == 0 ) {
         offsetbuf[0] = 0;
         for ( i = 1; i < size; i++ ) {
             offsetbuf[i] = lengthbuf[i-1] + offsetbuf[i-1];
         }
-        g_mask_final_length = offsetbuf[size-1] + lengthbuf[size-1];
+        g_mask_final_length[g_mask_id] = offsetbuf[size-1] + lengthbuf[size-1];
     }
     
-    MPI_Scatter(offsetbuf, 1, MPI_INT, &g_mask_offset, 1, MPI_INT, 0, comm);
-    MPI_Bcast(&g_mask_final_length, 1, MPI_INT, 0, comm);
+    MPI_Scatter(offsetbuf, 1, MPI_INT, &g_mask_offset[g_mask_id], 1, MPI_INT, 0, comm);
+    MPI_Bcast(&g_mask_final_length[g_mask_id], 1, MPI_INT, 0, comm);
     /*
     printf("g_mask_bits_length : %d\n", g_mask_bits_length );
     printf("g_mask_bits_offset : %d\n", g_mask_bits_offset );
@@ -200,34 +207,57 @@ int adios_set_mask(int64_t fd_p, uint64_t mask_length, const char *mask, MPI_Com
     printf("g_mask_offset      : %d\n", g_mask_offset );
     printf("g_mask_final_length: %d\n", g_mask_final_length );
     */
-    sprintf(s, "mask_vars/mask_%d/mask_offset", g_mask_count);
-    adios_write(fd_p, s, &g_mask_offset);
+    sprintf(s, "mask_vars/mask_%d/mask_offset", g_mask_id);
+    adios_write(fd_p, s, &g_mask_offset[g_mask_id]);
     
-    sprintf(s, "mask_vars/mask_%d/mask_bits_offset", g_mask_count);
-    adios_write(fd_p, s, &g_mask_bits_offset);
+    sprintf(s, "mask_vars/mask_%d/mask_bits_offset", g_mask_id);
+    adios_write(fd_p, s, &g_mask_bits_offset[g_mask_id]);
     
-    sprintf(s, "mask_vars/mask_%d/final_length", g_mask_count);
-    adios_write(fd_p, s, &g_final_length);
+    sprintf(s, "mask_vars/mask_%d/final_length", g_mask_id);
+    adios_write(fd_p, s, &g_final_length[g_mask_id]);
     
-    sprintf(s, "mask_vars/mask_%d/mask_bits_length", g_mask_count);
-    adios_write(fd_p, s, &g_mask_bits_length);
+    sprintf(s, "mask_vars/mask_%d/mask_bits_length", g_mask_id);
+    adios_write(fd_p, s, &g_mask_bits_length[g_mask_id]);
 
-    sprintf(s, "mask_vars/mask_%d/mask_final_length", g_mask_count);
-    adios_write(fd_p, s, &g_mask_final_length);
+    sprintf(s, "mask_vars/mask_%d/mask_final_length", g_mask_id);
+    adios_write(fd_p, s, &g_mask_final_length[g_mask_id]);
 
-    sprintf(s, "mask_vars/mask_%d/mask_bits_final_length", g_mask_count);
-    adios_write(fd_p, s, &g_mask_bits_final_length);
+    sprintf(s, "mask_vars/mask_%d/mask_bits_final_length", g_mask_id);
+    adios_write(fd_p, s, &g_mask_bits_final_length[g_mask_id]);
         
-    sprintf(s, "mask_vars/mask_%d/mask_bits", g_mask_count);
-    adios_write(fd_p, s, g_mask_bits);
+    sprintf(s, "mask_vars/mask_%d/mask_bits", g_mask_id);
+    adios_write(fd_p, s, g_mask_bits[g_mask_id]);
+
+
+    sprintf(s, "const/mask_%d/mask_bits_offset", g_mask_id);
+    adios_write(fd_p, s, &g_mask_bits_offset[g_mask_id]);
+
+    sprintf(s, "const/mask_%d/mask_bits_length", g_mask_id);
+    adios_write(fd_p, s, &g_mask_bits_length[g_mask_id]);
+
+    sprintf(s, "const/mask_%d/mask_offset", g_mask_id);
+    adios_write(fd_p, s, &g_mask_offset[g_mask_id]);
+
+    sprintf(s, "const/mask_%d/final_length", g_mask_id);
+    adios_write(fd_p, s, &g_final_length[g_mask_id]);
 
     return err_no_error;
 }
 
 int adios_unset_mask(int64_t fd_p) {
-    free(g_mask_bits);
-    g_mask_bits = NULL;
+    g_mask_id = -1
     return err_no_error;
+}
+
+int adios_remove_mask() {
+    int i;
+
+    for (i = 0; i < G_MAX_MASK_NUM; ++i) {
+        if (g_mask_bits[i] != NULL) {
+            free(g_mask_bits[i]);
+            g_mask_bits[i] = NULL;
+        }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -274,11 +304,11 @@ int adios_write (int64_t fd_p, const char * name, void * var)
     if (strncmp(name, "mask_vars/", 10) != 0 && g_mask_bits != NULL) {
         uint64_t element_size = adios_get_type_size(v->type, var);
         uint64_t var_length = adios_get_var_size(v, var) / element_size;
-        char *buffer = (char*) malloc(g_final_length * element_size);
+        char *buffer = (char*) malloc(g_final_length[g_mask_id] * element_size);
         uint64_t i, j, index = 0;
         for (i = 0; i < var_length; ++i) {
             uint64_t p = i / (sizeof(int) * 8), q = i % (sizeof(int) * 8);
-            if (((g_mask_bits[p] >> q) & 1) == 1) {
+            if (((g_mask_bits[g_mask_id][p] >> q) & 1) == 1) {
                 memcpy(buffer + index, (char *)var + i * element_size, element_size);
                 index += element_size;
             }
