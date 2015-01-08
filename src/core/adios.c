@@ -36,12 +36,11 @@ extern int adios_errno;
 static const int G_MAX_MASK_NUM = 8;
 
 static int g_mask_id = -1;
-static int g_total_length;
-static int g_mask_bits_offset;
-static int g_mask_offset;
-static int g_mask_final_length;
-static int g_mask_bits_final_length;
-static uint64_t g_final_length;
+static int g_mask_bits_offset[G_MAX_MASK_NUM];
+static int g_mask_offset[G_MAX_MASK_NUM];
+static int g_mask_final_length[G_MAX_MASK_NUM];
+static int g_mask_bits_final_length[G_MAX_MASK_NUM];
+static uint64_t g_final_length[G_MAX_MASK_NUM];
 static uint64_t g_mask_bits_length[G_MAX_MASK_NUM];
 static int *g_mask_bits[G_MAX_MASK_NUM];
 
@@ -245,7 +244,7 @@ int adios_set_mask(int64_t fd_p, int mask_id, uint64_t mask_length, const char *
 }
 
 int adios_unset_mask(int64_t fd_p) {
-    g_mask_id = -1
+    g_mask_id = -1;
     return err_no_error;
 }
 
@@ -301,7 +300,7 @@ int adios_write (int64_t fd_p, const char * name, void * var)
         return adios_errno;
     }
 
-    if (strncmp(name, "mask_vars/", 10) != 0 && g_mask_bits != NULL) {
+    if (strncmp(name, "mask_vars/", 10) != 0 && strncmp(name, "const/", 6) != 0 && g_mask_id != -1) {
         uint64_t element_size = adios_get_type_size(v->type, var);
         uint64_t var_length = adios_get_var_size(v, var) / element_size;
         char *buffer = (char*) malloc(g_final_length[g_mask_id] * element_size);
