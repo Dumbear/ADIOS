@@ -240,6 +240,8 @@ int adios_set_mask(int64_t fd_p, int mask_id, uint64_t mask_length, const char *
     sprintf(s, "const/mask_%d/final_length", g_mask_id);
     adios_write(fd_p, s, &g_final_length[g_mask_id]);
 
+    free(lengthbuf);
+    free(offsetbuf);
     return err_no_error;
 }
 

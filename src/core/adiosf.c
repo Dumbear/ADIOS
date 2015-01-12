@@ -35,7 +35,7 @@ int have_mask = 0;
 
 ///////////////////////////////////////////////////////////////////////////////
 void FC_FUNC_(adios_set_mask, ADIOS_SET_MASK) 
-        (int64_t * fd_p, int mask_id, uint64_t * mask_length, int * mask, MPI_Fint * comm, int mask_size)
+        (int64_t * fd_p, int *mask_id, uint64_t * mask_length, int * mask, MPI_Fint * comm, int mask_size)
 {
     int i, size = *mask_length;
     char * mask_buf = (char *)malloc( size*sizeof(char) );
@@ -46,7 +46,7 @@ void FC_FUNC_(adios_set_mask, ADIOS_SET_MASK)
     
     for ( i = 0; i < *mask_length; i++ )
             mask_buf[i] = mask[i];
-    adios_set_mask(*fd_p, mask_id, *mask_length, mask_buf, c_comm);
+    adios_set_mask(*fd_p, *mask_id, *mask_length, mask_buf, c_comm);
     free( mask_buf );
 }
 
@@ -61,6 +61,10 @@ void FC_FUNC_(adios_mask_init, ADIOS_MASK_INIT) ()
     adios_mask_init();
 }
 
+void FC_FUNC_(adios_remove_mask, ADIOS_REMOVE_MASK) () 
+{
+    adios_remove_mask();
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 void FC_FUNC_(adios_set_application_id, ADIOS_SET_APPLICATION_ID) (int *id, int * err)

@@ -27,6 +27,9 @@ extern "C"  /* prevent C++ name mangling */
 #endif
 
 extern int adios_errno;
+static int have_mask = 0;
+static char offset_var_names[4][64];
+static char length_var_names[4][64];
 
 #define PRINT_ERRMSG() fprintf(stderr, "ADIOS READ ERROR: %s\n", adios_get_last_errmsg())
 
@@ -50,11 +53,62 @@ void FC_FUNC_(adios_read_init_method, ADIOS_READ_INIT_METHOD) (
     char *paramstr;
     futils_called_from_fortran_set();
 
+    if( method == ADIOS_READ_METHOD_DATASPACES) {
+        adios_set_using_dataspaces();
+    }
     paramstr = futils_fstr_to_cstr(parameters, parameters_len);
     *err = common_read_init_method (method, comm, paramstr);
     free(paramstr);
     if (*err)
         PRINT_ERRMSG();
+}
+
+void FC_FUNC_(adios_read_set_mask_names, ADIOS_READ_SET_MASK_NAMES) (int *dims, char *offset_name, char *length_name, int offset_name_size, int length_name_size) 
+{
+    char *offset_name_tmp, *length_name_tmp;
+    offset_name_tmp = futils_fstr_to_cstr(offset_name, offset_name_size);
+    length_name_tmp = futils_fstr_to_cstr(length_name, length_name_size);
+    strcpy(offset_var_names[*dims-1], offset_name_tmp);
+    strcpy(length_var_names[*dims-1], length_name_tmp);
+    free(offset_name_tmp);
+    free(length_name_tmp);
+}
+
+void FC_FUNC_(adios_read_set_mask, ADIOS_READ_SET_MASK) (int64_t * fp, int *mask_id, int *n_dims ) 
+{
+    have_mask = 1;
+    int m_id = *mask_id;
+    int dims = *n_dims;
+    int i;
+    ADIOS_FILE *afp = (ADIOS_FILE *) *fp;
+    char *offset_var_name[4];
+    char *length_var_name[4];
+    for ( i = 0; i < dims; i++ ) {
+        offset_var_name[i] = (char*) malloc( sizeof(char) * 64 );
+        length_var_name[i] = (char*) malloc( sizeof(char) * 64 );
+    }
+    for ( i = 0; i < dims; i++ ) {
+        strcpy(offset_var_name[i], offset_var_names[i]);
+        strcpy(length_var_name[i], length_var_names[i]); 
+    }
+    adios_read_set_mask(afp, m_id, dims, offset_var_name, length_var_name);
+
+    for ( i = 0; i < dims; i++ ) {
+        free(offset_var_name[i]);
+        free(length_var_name[i]); 
+    }
+}
+
+void FC_FUNC_(adios_read_unset_mask, ADIOS_READ_UNSET_MASK) (int64_t *fp ) 
+{
+    have_mask = 0;
+    ADIOS_FILE *afp = (ADIOS_FILE *) *fp;
+    adios_read_unset_mask(afp);
+}
+
+void FC_FUNC_(adios_read_remove_mask, ADIOS_READ_REMOVE_MASK) ()
+{
+    adios_read_remove_mask();
 }
 
 void FC_FUNC_(adios_read_finalize_method, ADIOS_READ_FINALIZE_METHOD) (int *fmethod, int * err)
@@ -65,7 +119,6 @@ void FC_FUNC_(adios_read_finalize_method, ADIOS_READ_FINALIZE_METHOD) (int *fmet
     if (*err)
         PRINT_ERRMSG();
 }
-
 
 void FC_FUNC_(adios_read_open, ADIOS_READ_OPEN)
         (int64_t * fp,
@@ -348,7 +401,10 @@ void FC_FUNC_(adios_schedule_read, ADIOS_SCHEDULE_READ)
     char *varstr;
     varstr = futils_fstr_to_cstr(varname, varname_len);
     if (varstr != NULL) {
-        *err = common_read_schedule_read (afp, sel, varstr, *from_step, *nsteps, NULL /* NCSU ALACRITY-ADIOS */, data);
+        if( have_mask ) 
+            *err = adios_schedule_read(afp, sel, varstr, *from_step, *nsteps, data);
+        else 
+            *err = common_read_schedule_read(afp, sel, varstr, *from_step, *nsteps, NULL /* NCSU ALACRITY-ADIOS */, data);
         free(varstr);
     } else {
         *err = adios_errno;
@@ -364,7 +420,10 @@ void FC_FUNC_(adios_perform_reads, ADIOS_PERFORM_READS)
          int     * err)
 {
     ADIOS_FILE *afp = (ADIOS_FILE *) *fp;
-    *err = common_read_perform_reads (afp, 1); // only blocking read implemented for Fortran
+    if( have_mask )
+        *err = adios_perform_reads(afp, 1);
+    else 
+        *err = common_read_perform_reads (afp, 1); // only blocking read implemented for Fortran
     if (*err < 0)
         PRINT_ERRMSG();
 }
