@@ -465,6 +465,43 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
         }
         char *var_data = (char *)malloc(sizeof(char) * element_size * var_length);
 
+        int from[10], to[10];
+        int pos[10];
+        for (k = 0; k < g_n_dims; ++k) {
+            from[k] = g_block_offset[g_mask_id][i][k];
+            int t1 = req->sel->u.bb.start[k];
+            if (t1 > from[k]) {
+                from[k] = t1;
+            }
+            pos[k] = from[k];
+            to[k] = g_block_offset[g_mask_id][i][k] + g_block_length[g_mask_id][i][k];
+            int t2 = req->sel->u.bb.start[k] + req->sel->u.bb.count[k];
+            if (t2 < to[k]) {
+                to[k] = t2;
+            }
+        }
+        while (true) {
+            int index_block = 0;
+            for (k = 0; k < g_n_dims; ++k) {
+                index_block = index_block * g_block_length[g_mask_id][i][k] + pos[k] - g_block_offset[g_mask_id][i][k];
+            }
+            int index_req = 0;
+            for (k = 0; k < g_n_dims; ++k) {
+                index_req = index_req * req->sel->u.bb.count[k] + pos[k] - req->sel->u.bb.start[k];
+            }
+            memcpy(req->data + element_size * index_req, (char *)mask_vars[i] + element_size * index_block, element_size);
+            for (k = 0; k < g_n_dims; ++k) {
+                if (++pos[k] == to[k]) {
+                    pos[k] = 0;
+                } else {
+                    break;
+                }
+            }
+            if (k == g_n_dims) {
+                break;
+            }
+        }
+
         index = 0;
         for (j = 0; j < var_length; ++j) {
             uint64_t p = j / (sizeof(int) * 8), q = j % (sizeof(int) * 8);
