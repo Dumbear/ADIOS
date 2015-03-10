@@ -32,6 +32,7 @@ static int g_mask_id = -1;
 
 static int g_f_mask_done[G_MAX_MASK_NUM] = {};
 static int **g_mask_bits[G_MAX_MASK_NUM];
+static int **g_mask_index[G_MAX_MASK_NUM];
 
 static int *g_mask_bits_offset[G_MAX_MASK_NUM];
 static int *g_mask_bits_length[G_MAX_MASK_NUM];
@@ -260,6 +261,7 @@ int adios_read_set_mask(ADIOS_FILE *fp, int mask_id, int n_dims, const char **of
         adios_perform_reads(fp, 1);
     }
     g_mask_bits[g_mask_id] = (int **)malloc(sizeof(int *) * g_n_blocks);
+    g_mask_index[g_mask_id] = (int **)malloc(sizeof(int *) * g_n_blocks);
     for (i = 0; i < g_n_blocks; ++i) {
         g_mask_bits[g_mask_id][i] = NULL;
     }
@@ -311,9 +313,11 @@ int adios_read_remove_mask() {
         for (i = 0; i < g_n_blocks; ++i) {
             if (g_mask_bits[k][i] != NULL) {
                 free(g_mask_bits[k][i]);
+                free(g_mask_index[k][i]);
             }
         }
         free(g_mask_bits[k]);
+        free(g_mask_index[k]);
         g_mask_bits[k] = NULL;
 
         free(g_mask_bits_offset[k]);
@@ -367,9 +371,10 @@ int adios_schedule_read (const ADIOS_FILE      * fp,
     char s[64];
     sprintf(s, "mask_vars/mask_%d/mask_bits", g_mask_id);
     for (i = 0; i < g_n_blocks; ++i) {
-        if(g_mask_bits[g_mask_id][i] == NULL && adios_boundingbox_touched(sel, g_block_offset[g_mask_id][i], g_block_length[g_mask_id][i])) {
+        if (g_mask_bits[g_mask_id][i] == NULL && adios_boundingbox_touched(sel, g_block_offset[g_mask_id][i], g_block_length[g_mask_id][i])) {
             // printf("    Variable %s touched block %d\n", varname, i);
             g_mask_bits[g_mask_id][i] = (int *)malloc(sizeof(int) * g_mask_bits_length[g_mask_id][i]);
+            g_mask_index[g_mask_id][i] = (int *)malloc(sizeof(int) * g_mask_bits_length[g_mask_id][i] * sizeof(int) * 8);
             uint64_t offset = g_mask_bits_offset[g_mask_id][i], length = g_mask_bits_length[g_mask_id][i];
             ADIOS_SELECTION *mask_bits_sel = adios_selection_boundingbox(1, &offset, &length);
             adios_schedule_read(fp, mask_bits_sel, s, from_steps, nsteps, g_mask_bits[g_mask_id][i]);
@@ -463,7 +468,7 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
         for (j = 0; j < g_n_dims; ++j) {
             var_length *= g_block_length[g_mask_id][i][j];
         }
-        char *var_data = (char *)malloc(sizeof(char) * element_size * var_length);
+        // char *var_data = (char *)malloc(sizeof(char) * element_size * var_length);
 
         int from[10], to[10];
         int pos[10];
@@ -489,7 +494,7 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
             for (k = 0; k < g_n_dims; ++k) {
                 index_req = index_req * req->sel->u.bb.count[k] + pos[k] - req->sel->u.bb.start[k];
             }
-            memcpy(req->data + element_size * index_req, (char *)mask_vars[i] + element_size * index_block, element_size);
+            memcpy(req->data + element_size * index_req, (char *)mask_vars[i] + element_size * g_mask_index[g_mask_id][i][index_block], element_size);
             for (k = 0; k < g_n_dims; ++k) {
                 if (++pos[k] == to[k]) {
                     pos[k] = 0;
@@ -502,16 +507,16 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
             }
         }
 
-        index = 0;
-        for (j = 0; j < var_length; ++j) {
-            uint64_t p = j / (sizeof(int) * 8), q = j % (sizeof(int) * 8);
-            if (((g_mask_bits[g_mask_id][i][p] >> q) & 1) == 1) {
-                memcpy(var_data + element_size * j, (char *)mask_vars[i] + index, element_size);
-                index += element_size;
-            } else {
-                memset(var_data + element_size * j, 0, element_size);
-            }
-        }
+        // index = 0;
+        // for (j = 0; j < var_length; ++j) {
+        //     uint64_t p = j / (sizeof(int) * 8), q = j % (sizeof(int) * 8);
+        //     if (((g_mask_bits[g_mask_id][i][p] >> q) & 1) == 1) {
+        //         memcpy(var_data + element_size * j, (char *)mask_vars[i] + index, element_size);
+        //         index += element_size;
+        //     } else {
+        //         memset(var_data + element_size * j, 0, element_size);
+        //     }
+        // }
 
         // uint64_t start[10], end[10];
         // for (j = 0; j < g_n_dims; ++j) {
@@ -524,28 +529,28 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
         //         end[j] = g_block_offset[i][j] + g_block_length[i][j] - 1;
         //     }
         // }
-        for (j = 0; j < var_length; ++j) {
-            int offset[10];
-            int pos = j;
-            int f_in_domain = 1;
-            for (k = g_n_dims - 1; k >= 0; --k) {
-                offset[k] = g_block_offset[g_mask_id][i][k] + pos % g_block_length[g_mask_id][i][k] - req->sel->u.bb.start[k];
-                if (offset[k] < 0 || offset[k] >= req->sel->u.bb.count[k]) {
-                    f_in_domain = 0;
-                    break;
-                }
-                pos /= g_block_length[g_mask_id][i][k];
-            }
-            if (f_in_domain) {
-                pos = 0;
-                for (k = 0; k < g_n_dims; ++k) {
-                    pos = pos * req->sel->u.bb.count[k] + offset[k];
-                }
-                memcpy(req->data + element_size * pos, var_data + element_size * j, element_size);
-            }
-        }
+        // for (j = 0; j < var_length; ++j) {
+        //     int offset[10];
+        //     int pos = j;
+        //     int f_in_domain = 1;
+        //     for (k = g_n_dims - 1; k >= 0; --k) {
+        //         offset[k] = g_block_offset[g_mask_id][i][k] + pos % g_block_length[g_mask_id][i][k] - req->sel->u.bb.start[k];
+        //         if (offset[k] < 0 || offset[k] >= req->sel->u.bb.count[k]) {
+        //             f_in_domain = 0;
+        //             break;
+        //         }
+        //         pos /= g_block_length[g_mask_id][i][k];
+        //     }
+        //     if (f_in_domain) {
+        //         pos = 0;
+        //         for (k = 0; k < g_n_dims; ++k) {
+        //             pos = pos * req->sel->u.bb.count[k] + offset[k];
+        //         }
+        //         memcpy(req->data + element_size * pos, var_data + element_size * j, element_size);
+        //     }
+        // }
 
-        free(var_data);
+        // free(var_data);
     }
 
     for (i = 0; i < g_n_blocks; ++i) {
@@ -568,7 +573,21 @@ int adios_perform_reads (const ADIOS_FILE *fp, int blocking)
         return common_read_perform_reads (fp, blocking);
     }
 
+    int i, j, k;
     common_read_perform_reads (fp, blocking);
+    for (i = 0; i < g_n_blocks; ++i) {
+        if (g_mask_bits[g_mask_id][i] == NULL) {
+            continue;
+        }
+        int index = 0;
+        g_mask_index[g_mask_id][i][index] = 0;
+        for (j = 0; j < g_mask_bits_length[g_mask_id][i]; ++j) {
+            for (k = 0; k < sizeof(int) * 8; ++k) {
+                g_mask_index[g_mask_id][i][index + 1] = g_mask_index[g_mask_id][i][index] + ((g_mask_bits[g_mask_id][i][j] >> k) & 1);
+                ++index;
+            }
+        }
+    }
     g_f_mask_done[g_mask_id] = 1;
 
     mask_read_request *req;
