@@ -1,3 +1,4 @@
+#define DUMB_DEBUG
 /* 
  * ADIOS is freely available under the terms of the BSD license described
  * in the COPYING file in the top level directory of this source distribution.
@@ -447,6 +448,10 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
     //     }
     // }
 
+    double t1, t2, t3;
+#ifdef DUMB_DEBUG
+    t1 = MPI_Wtime();
+#endif
     char **mask_vars = (char **)malloc(sizeof(char *) * g_n_blocks);
     for (i = 0; i < g_n_blocks; ++i) {
         mask_vars[i] = NULL;
@@ -458,7 +463,17 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
             adios_selection_delete(mask_sel);
         }
     }
+#ifdef DUMB_DEBUG
+    t2 = MPI_Wtime();
+#endif
     common_read_perform_reads(fp, 1);
+#ifdef DUMB_DEBUG
+    t3 = MPI_Wtime();
+#endif
+#ifdef DUMB_DEBUG
+    printf("[%s]: schedule var %s all data bits: %.8f\n", __func__, req->var_name, t2 - t1);
+    printf("[%s]: read var %s all data bits: %.8f\n", __func__, req->var_name, t3 - t2);
+#endif
 
     for (i = 0; i < g_n_blocks; ++i) {
         if (mask_vars[i] == NULL) {
@@ -472,7 +487,12 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
 
         int from[10], to[10];
         int pos[10];
-        for (k = 0; k < g_n_dims; ++k) {
+        uint64_t dim_offset_block[11];
+        uint64_t dim_offset_req[11];
+        dim_offset_block[g_n_dims] = 1;
+        dim_offset_req[g_n_dims] = 1;
+        uint64_t index_block = 0, index_req = 0;
+        for (k = g_n_dims - 1; k >= 0; --k) {
             from[k] = g_block_offset[g_mask_id][i][k];
             int t1 = req->sel->u.bb.start[k];
             if (t1 > from[k]) {
@@ -484,21 +504,37 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
             if (t2 < to[k]) {
                 to[k] = t2;
             }
+            dim_offset_block[k] = dim_offset_block[k + 1] * g_block_length[g_mask_id][i][k];
+            dim_offset_req[k] = dim_offset_req[k + 1] * req->sel->u.bb.count[k];
+            index_block += (pos[k] - g_block_offset[g_mask_id][i][k]) * dim_offset_block[k + 1];
+            index_req += (pos[k] - req->sel->u.bb.start[k]) * dim_offset_req[k + 1];
         }
+#ifdef DUMB_DEBUG
+        t1 = MPI_Wtime();
+#endif
         while (true) {
-            int index_block = 0;
+            /*int index_block = 0;
             for (k = 0; k < g_n_dims; ++k) {
                 index_block = index_block * g_block_length[g_mask_id][i][k] + pos[k] - g_block_offset[g_mask_id][i][k];
             }
             int index_req = 0;
             for (k = 0; k < g_n_dims; ++k) {
                 index_req = index_req * req->sel->u.bb.count[k] + pos[k] - req->sel->u.bb.start[k];
+            }*/
+            int p = index_block / (sizeof(int) * 8), q = index_block % (sizeof(int) * 8);
+            if (((g_mask_bits[g_mask_id][i][p] >> q) & 1) == 1) {
+                memcpy(req->data + element_size * index_req, (char *)mask_vars[i] + element_size * g_mask_index[g_mask_id][i][index_block], element_size);
+            } else {
+                memset(req->data + element_size * index_req, 0, element_size);
             }
-            memcpy(req->data + element_size * index_req, (char *)mask_vars[i] + element_size * g_mask_index[g_mask_id][i][index_block], element_size);
             for (k = 0; k < g_n_dims; ++k) {
                 if (++pos[k] == to[k]) {
-                    pos[k] = 0;
+                    index_block -= (pos[k] - from[k] - 1) * dim_offset_block[k + 1];
+                    index_req -= (pos[k] - from[k] - 1) * dim_offset_req[k + 1];
+                    pos[k] = from[k];
                 } else {
+                    index_block += dim_offset_block[k + 1];
+                    index_req += dim_offset_req[k + 1];
                     break;
                 }
             }
@@ -506,6 +542,12 @@ static int adios_read_mask_var(const ADIOS_FILE *fp, mask_read_request *req) {
                 break;
             }
         }
+#ifdef DUMB_DEBUG
+        t2 = MPI_Wtime();
+#endif
+#ifdef DUMB_DEBUG
+        printf("[%s]: reorganize block %d: %.8f\n", __func__, i, t2 - t1);
+#endif
 
         // index = 0;
         // for (j = 0; j < var_length; ++j) {
@@ -573,8 +615,15 @@ int adios_perform_reads (const ADIOS_FILE *fp, int blocking)
         return common_read_perform_reads (fp, blocking);
     }
 
+    double t1, t2, t3;
     int i, j, k;
+#ifdef DUMB_DEBUG
+    t1 = MPI_Wtime();
+#endif
     common_read_perform_reads (fp, blocking);
+#ifdef DUMB_DEBUG
+    t2 = MPI_Wtime();
+#endif
     for (i = 0; i < g_n_blocks; ++i) {
         if (g_mask_bits[g_mask_id][i] == NULL) {
             continue;
@@ -588,12 +637,19 @@ int adios_perform_reads (const ADIOS_FILE *fp, int blocking)
             }
         }
     }
+#ifdef DUMB_DEBUG
+    t3 = MPI_Wtime();
+#endif
     g_f_mask_done[g_mask_id] = 1;
 
     mask_read_request *req;
     for (req = g_requests; req != NULL; req = req->next) {
         adios_read_mask_var(fp, req);
     }
+#ifdef DUMB_DEBUG
+    printf("[%s]: read all mask bits: %.8f\n", __func__, t2 - t1);
+    printf("[%s]: make index for all mask bits: %.8f\n", __func__, t3 - t2);
+#endif
     return err_no_error;
 }
 
